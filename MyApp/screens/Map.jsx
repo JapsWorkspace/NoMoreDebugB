@@ -1978,9 +1978,9 @@ const [selectedBarangayIds, setSelectedBarangayIds] = useState([]);
 const [barangaySpecificMode, setBarangaySpecificMode] = useState(false);
 const [showIncidentMarkers, setShowIncidentMarkers] = useState(false);
 const [showBarangayMarkers, setShowBarangayMarkers] = useState(false);
-const [incidentDebugMode, setIncidentDebugMode] = useState(false);
-const [evacGpsDebugMode, setEvacGpsDebugMode] = useState(false);
 const [evacGpsLocating, setEvacGpsLocating] = useState(false);
+const [evacGpsError, setEvacGpsError] = useState("");
+const [evacGpsRefreshKey, setEvacGpsRefreshKey] = useState(0);
 const [gpsLocation, setGpsLocation] = useState(null);
 
 const {
@@ -2017,7 +2017,6 @@ const {
   const evacSelectionRecenterTimerRef = useRef(null);
   const routeHazardAlertedRef = useRef(new Set());
   const clusterNotificationInFlightRef = useRef(new Set());
-  const previousEvacGpsDebugModeRef = useRef(evacGpsDebugMode);
   const previousRouteOriginRef = useRef(USER_POS);
   const evacRouteManualCameraRef = useRef(false);
   const evacRouteAutoFitKeyRef = useRef("");
@@ -2036,8 +2035,8 @@ const {
   const [hazardMode, setHazardMode] = useState("flood");
   const routeStartCoordinate = useMemo(() => {
     const gpsCoordinate = toMarkerCoordinate(gpsLocation);
-    return evacGpsDebugMode && gpsCoordinate ? gpsCoordinate : USER_POS;
-  }, [evacGpsDebugMode, gpsLocation]);
+    return gpsCoordinate || USER_POS;
+  }, [gpsLocation]);
 
   const requestedModuleParam = navRoute.params?.module;
   const requestedModule = ["flood", "earthquake"].includes(requestedModuleParam)
@@ -2078,8 +2077,8 @@ const {
       clearTimeout(evacSelectionRecenterTimerRef.current);
       evacSelectionRecenterTimerRef.current = null;
     }
-    setEvacGpsDebugMode(false);
     setGpsLocation(null);
+    setEvacGpsError("");
   }, [isEvac]);
 
   useEffect(() => {
@@ -2091,13 +2090,20 @@ const {
   }, []);
 
   useEffect(() => {
-    if (!isEvac || !evacGpsDebugMode || Platform.OS === "web") return undefined;
+    if (!isEvac) return undefined;
+
+    if (Platform.OS === "web") {
+      setGpsLocation(null);
+      setEvacGpsError("Phone GPS is unavailable in this app view.");
+      return undefined;
+    }
 
     let mounted = true;
     let subscription = null;
 
     async function watchEvacGpsLocation() {
       setEvacGpsLocating(true);
+      setEvacGpsError("");
 
       try {
         const Location = await import("expo-location");
@@ -2106,12 +2112,8 @@ const {
         if (!mounted) return;
 
         if (permission.status !== "granted") {
-          setEvacGpsDebugMode(false);
           setGpsLocation(null);
-          Alert.alert(
-            "GPS Location Needed",
-            "Allow location access to use your phone GPS for dynamic pathfinding."
-          );
+          setEvacGpsError("Location permission is required for evacuation routes.");
           return;
         }
 
@@ -2146,14 +2148,10 @@ const {
           }
         );
       } catch (err) {
-        console.log("Evac GPS debug failed:", err?.message);
+        console.log("Evac GPS failed:", err?.message);
         if (mounted) {
-          setEvacGpsDebugMode(false);
           setGpsLocation(null);
-          Alert.alert(
-            "GPS Unavailable",
-            err?.message || "Unable to get your phone location right now."
-          );
+          setEvacGpsError(err?.message || "Unable to get your phone location right now.");
         }
       } finally {
         if (mounted) setEvacGpsLocating(false);
@@ -2166,11 +2164,9 @@ const {
       mounted = false;
       subscription?.remove?.();
     };
-  }, [evacGpsDebugMode, isEvac]);
+  }, [evacGpsRefreshKey, isEvac]);
 
   useEffect(() => {
-    const previousValue = previousEvacGpsDebugModeRef.current;
-    previousEvacGpsDebugModeRef.current = evacGpsDebugMode;
     const previousOrigin = previousRouteOriginRef.current;
     const originMovedMeters = distanceMetersBetween(previousOrigin, routeStartCoordinate) || 0;
     previousRouteOriginRef.current = routeStartCoordinate;
@@ -2179,7 +2175,7 @@ const {
       !isEvac ||
       isNavigating ||
       !routeRequested ||
-      (previousValue === evacGpsDebugMode && originMovedMeters < 25)
+      originMovedMeters < 25
     ) {
       return;
     }
@@ -2189,7 +2185,6 @@ const {
     setActiveRoute(null);
     setTimeout(() => setRouteRequested(true), 0);
   }, [
-    evacGpsDebugMode,
     isEvac,
     isNavigating,
     routeRequested,
@@ -3266,7 +3261,7 @@ const shouldShowIncidentMarkers =
     [selectedIncidentCoordinate]
   );
 
-  const canSubmitIncidentFromLocation = incidentDebugMode || incidentPointInsideJaen;
+  const canSubmitIncidentFromLocation = incidentPointInsideJaen;
 
   const navigationTopSummary = useMemo(() => {
     const maneuver = getUpcomingManeuver(activeNavigationRoute?.coords, currentLocation);
@@ -3495,95 +3490,11 @@ const shouldShowIncidentMarkers =
 
     if (!isValidCoordinate(latitude, longitude)) return;
 
-    if (!incidentDebugMode) {
-      Alert.alert(
-        "Real Location Required",
-        "Debug Mode OFF uses your phone location. Turn on Debug Mode to choose a test location on the map."
-      );
-      return;
-    }
-
-    const matchedFeature = findBarangayFeatureByCoordinate(
-      latitude,
-      longitude,
-      homepageBarangays.map((barangay) => barangay.feature)
-    );
-
-    console.log("[incident debug map tap]", {
-      latitude,
-      longitude,
-      insideReportableBarangay: Boolean(matchedFeature),
-    });
-    let matchedBarangay = matchedFeature
-      ? homepageBarangays.find((barangay) => barangay.feature === matchedFeature)
-      : null;
-
-    if (!matchedBarangay) {
-      matchedBarangay =
-        homepageBarangays
-          .map((barangay) => {
-            const center = barangay?.center;
-            if (!center) return null;
-
-            const dx = center.latitude - latitude;
-            const dy = center.longitude - longitude;
-            const distance = dx * dx + dy * dy;
-
-            return { barangay, distance };
-          })
-          .filter(Boolean)
-          .sort((a, b) => a.distance - b.distance)[0]?.barangay || null;
-    }
-
-    const selection = matchedBarangay
-      ? resolveIncidentBarangaySelection(matchedBarangay.feature, matchedBarangay.label)
-      : {
-          detectedBarangay: "",
-          detectedDistrict: "",
-          barangayValue: "",
-          districtValue: "",
-          barangayDropdownMatched: false,
-          districtDropdownMatched: false,
-        };
-    const detectedBarangay = selection.barangayValue || selection.detectedBarangay || "";
-    const detectedDistrict = selection.districtValue || selection.detectedDistrict || "";
-
-    console.log("[incident barangay detected]", {
-      detectedBarangayName: selection.detectedBarangay || "",
-      detectedDistrictName: selection.detectedDistrict || "",
-      featureProperties: matchedBarangay?.feature?.properties || null,
-      matchedBy: matchedFeature ? "polygon" : matchedBarangay ? "nearest" : "none",
-    });
-    logIncidentDropdownResolution(selection);
-
-    if (matchedBarangay) {
-      setSelectedBarangay(matchedBarangay);
-    }
-
-    setIncidentDraft((prev) => ({
-      ...prev,
-      district: detectedDistrict,
-      barangay: detectedBarangay,
-      location: compactAddressParts([
-        detectedBarangay ? `Barangay ${detectedBarangay}` : "Selected map location",
-        "Jaen",
-        "Nueva Ecija",
-      ]).join(", "),
-      latitude,
-      longitude,
-    }));
-
-    mapRef.current?.animateToRegion(
-      {
-        latitude,
-        longitude,
-        latitudeDelta: 0.008,
-        longitudeDelta: 0.008,
-      },
-      280
-    );
+    // Production reports use a verified phone GPS reading. Map taps never
+    // replace the reporter's location.
+    return;
   },
-  [homepageBarangays, incidentDebugMode, isIncident]
+  [isIncident]
 );
 
   const openQuickIncidentReport = useCallback(async () => {
@@ -3695,7 +3606,7 @@ const currentLocationFeature = findBarangayFeatureByCoordinate(
   homepageBarangays.map((barangay) => barangay.feature)
 );
 
-if (!incidentDebugMode && !currentLocationFeature) {
+if (!currentLocationFeature) {
   Alert.alert(
     "Outside Jaen Boundary",
     "Reports can only be given inside Jaen"
@@ -3735,7 +3646,7 @@ if (!incidentDebugMode && !currentLocationFeature) {
     } finally {
       setIncidentLocating(false);
     }
-  }, [homepageBarangays, incidentDebugMode, incidentLocating]);
+  }, [homepageBarangays, incidentLocating]);
 
   const applyIncidentImages = useCallback((nextImages, replace = false) => {
     const currentImages = replace ? [] : getIncidentImageItems(incidentImage);
@@ -3874,31 +3785,15 @@ if (!incidentDebugMode && !currentLocationFeature) {
     incidentDraft.latitude,
     incidentDraft.longitude
   );
-  const manualAddressBarangay =
-    incidentDebugMode && !hasCoordinates && cleanStreet && cleanBarangay
-      ? homepageBarangays.find(
-          (barangay) =>
-            normalizeBarangayName(barangay.label) === normalizeBarangayName(cleanBarangay) ||
-            normalizeBarangayName(getFeatureBarangayName(barangay.feature)) ===
-              normalizeBarangayName(cleanBarangay)
-        )
-      : null;
-  const manualAddressCoordinate = toMarkerCoordinate(manualAddressBarangay?.center);
-  const resolvedIncidentLatitude = hasCoordinates
-    ? incidentDraft.latitude
-    : manualAddressCoordinate?.latitude;
-  const resolvedIncidentLongitude = hasCoordinates
-    ? incidentDraft.longitude
-    : manualAddressCoordinate?.longitude;
+  const resolvedIncidentLatitude = hasCoordinates ? incidentDraft.latitude : null;
+  const resolvedIncidentLongitude = hasCoordinates ? incidentDraft.longitude : null;
   const hasReportCoordinates = isValidCoordinate(
     resolvedIncidentLatitude,
     resolvedIncidentLongitude
   );
 
   if (!hasReportCoordinates) {
-    nextErrors.location = incidentDebugMode
-      ? "Tap the map or use current location to set coordinates."
-      : "Use current location to verify you are inside Jaen.";
+    nextErrors.location = "Use current location to verify you are inside Jaen.";
   }
 
   const reportPointInsideJaen = Boolean(
@@ -3909,7 +3804,7 @@ if (!incidentDebugMode && !currentLocationFeature) {
     )
   );
 
-  if (hasReportCoordinates && !(reportPointInsideJaen || incidentDebugMode)) {
+  if (hasReportCoordinates && !reportPointInsideJaen) {
     nextErrors.location = "Reports can only be given inside Jaen";
   }
 
@@ -3942,6 +3837,8 @@ if (!incidentDebugMode && !currentLocationFeature) {
       location: cleanLocation,
       latitude: resolvedIncidentLatitude,
       longitude: resolvedIncidentLongitude,
+      reporterLatitude: resolvedIncidentLatitude,
+      reporterLongitude: resolvedIncidentLongitude,
       description: cleanDescription,
       usernames: incidentDraft.usernames || user?.username || "",
       phone: incidentDraft.phone || user?.phone || "",
@@ -4018,7 +3915,6 @@ if (!incidentDebugMode && !currentLocationFeature) {
 }, [
   incidentBusy,
   incidentDraft,
-  incidentDebugMode,
   incidentImage,
   homepageBarangays,
   refreshIncidents,
@@ -4488,8 +4384,6 @@ if (!incidentDebugMode && !currentLocationFeature) {
           incidentLocating={incidentLocating}
           submitIncident={submitIncident}
           incidentBusy={incidentBusy}
-          incidentDebugMode={incidentDebugMode}
-          setIncidentDebugMode={setIncidentDebugMode}
           canSubmitIncidentFromLocation={canSubmitIncidentFromLocation}
           incidentPointInsideJaen={incidentPointInsideJaen}
           incidentCount={selectedBarangay ? selectedBarangayIncidents.length : normalizedIncidents.length}
@@ -4541,9 +4435,10 @@ if (!incidentDebugMode && !currentLocationFeature) {
           exitNavigationMode={exitNavigationMode}
           navigationTopSummary={navigationTopSummary}
           currentSpeedKmh={currentSpeedKmh}
-          evacGpsDebugMode={evacGpsDebugMode}
-          setEvacGpsDebugMode={setEvacGpsDebugMode}
           evacGpsLocating={evacGpsLocating}
+          evacGpsError={evacGpsError}
+          hasEvacGpsLocation={Boolean(toMarkerCoordinate(gpsLocation))}
+          retryEvacGps={() => setEvacGpsRefreshKey((value) => value + 1)}
           routeStartCoordinate={routeStartCoordinate}
           openQuickIncidentReport={openQuickIncidentReport}
           quickReportVisible={quickReportVisible}
@@ -4585,8 +4480,6 @@ function ModulePanel({
   incidentLocating,
   submitIncident,
   incidentBusy,
-  incidentDebugMode,
-  setIncidentDebugMode,
   canSubmitIncidentFromLocation,
   incidentPointInsideJaen,
   incidentCount,
@@ -4634,9 +4527,10 @@ function ModulePanel({
   exitNavigationMode,
   navigationTopSummary,
   currentSpeedKmh,
-  evacGpsDebugMode,
-  setEvacGpsDebugMode,
   evacGpsLocating,
+  evacGpsError,
+  hasEvacGpsLocation,
+  retryEvacGps,
   routeStartCoordinate,
   openQuickIncidentReport,
   quickReportVisible,
@@ -5001,6 +4895,13 @@ function ModulePanel({
 
   const requestRoutes = () => {
     if (!evac) return;
+    if (!hasEvacGpsLocation) {
+      Alert.alert(
+        "Current Location Required",
+        evacGpsError || "Wait for your phone GPS location before finding a route."
+      );
+      return;
+    }
     setIsNavigating(false);
     setFollowMode(false);
     setPanelState("ROUTE_SELECTION");
@@ -5317,33 +5218,6 @@ function ModulePanel({
       </View>
     </View>
 
-    <TouchableOpacity
-      activeOpacity={0.88}
-      style={[
-        styles.debugStatusCard,
-        themedOverlay.softCard,
-        incidentDebugMode && styles.debugStatusCardActive,
-      ]}
-      onPress={() => setIncidentDebugMode((value) => !value)}
-    >
-      <Ionicons
-        name={incidentDebugMode ? "bug" : "bug-outline"}
-        size={18}
-        color={incidentDebugMode ? "#FFFFFF" : theme.primary}
-      />
-      <Text
-        style={[
-          styles.debugStatusText,
-          themedOverlay.primaryText,
-          incidentDebugMode && styles.debugStatusTextActive,
-        ]}
-      >
-        {incidentDebugMode
-          ? "Debug Mode ON: map test location enabled."
-          : "Debug Mode OFF: using your real phone location."}
-      </Text>
-    </TouchableOpacity>
-
     {incidentPanelTab === "report" && (
       <>
         <View style={[styles.panelSection, themedOverlay.section]}>
@@ -5485,12 +5359,8 @@ function ModulePanel({
 
           <Text style={[styles.locationStatusText, themedOverlay.subtext]}>
             {selectedIncidentCoordinate
-              ? incidentDebugMode
-                ? "Debug map point set for this report."
-                : "Phone location set for this report."
-              : incidentDebugMode
-                ? "No map point yet. Tap the map or use current location."
-                : "No phone location yet. Use current location to report."}
+              ? "Verified phone location set for this report."
+              : "No verified location yet. Use current location to report."}
           </Text>
           {!!incidentErrors?.location && <Text style={styles.validationText}>{incidentErrors.location}</Text>}
 
@@ -5573,9 +5443,9 @@ function ModulePanel({
         <TouchableOpacity
           style={[
             styles.primaryBtn,
-            incidentBusy && styles.disabledBtn,
+            (incidentBusy || !canSubmitIncidentFromLocation) && styles.disabledBtn,
           ]}
-          disabled={incidentBusy}
+          disabled={incidentBusy || !canSubmitIncidentFromLocation}
           onPress={submitIncident}
         >
           <Text style={styles.primaryText}>{incidentBusy ? "Submitting..." : "Submit incident"}</Text>
@@ -6105,41 +5975,24 @@ function ModulePanel({
             {!isNavigating && (
               <>
             <TouchableOpacity
-              activeOpacity={0.88}
-              style={[
-                styles.debugStatusCard,
-                themedOverlay.softCard,
-                evacGpsDebugMode && styles.debugStatusCardActive,
-                evacGpsLocating && styles.debugStatusCardDisabled,
-              ]}
-              disabled={evacGpsLocating}
-              onPress={() => {
-                if (!evacGpsDebugMode && Platform.OS === "web") {
-                  Alert.alert(
-                    "GPS Unavailable",
-                    "Phone GPS is not available in this app view."
-                  );
-                  return;
-                }
-
-                setEvacGpsDebugMode((value) => !value);
-              }}
+              activeOpacity={evacGpsError ? 0.82 : 1}
+              style={[styles.evacLocationStatusCard, themedOverlay.softCard]}
+              disabled={!evacGpsError || evacGpsLocating}
+              onPress={retryEvacGps}
             >
               <Ionicons
-                name={evacGpsDebugMode ? "navigate" : "navigate-outline"}
+                name={hasEvacGpsLocation ? "navigate" : evacGpsError ? "warning-outline" : "locate-outline"}
                 size={18}
-                color={evacGpsDebugMode ? "#FFFFFF" : theme.primary}
+                color={evacGpsError ? theme.danger : theme.primary}
               />
-              <Text
-                style={[
-                  styles.debugStatusText,
-                  themedOverlay.primaryText,
-                  evacGpsDebugMode && styles.debugStatusTextActive,
-                ]}
-              >
-                {evacGpsDebugMode
-                  ? "GPS Debug ON: using actual phone location."
-                  : "GPS Debug OFF: using demo location for Evac Place."}
+              <Text style={[styles.evacLocationStatusText, evacGpsError ? { color: theme.danger } : themedOverlay.primaryText]}>
+                {evacGpsLocating
+                  ? "Getting your phone location..."
+                  : hasEvacGpsLocation
+                    ? "Using your current phone GPS for routes."
+                    : evacGpsError
+                      ? `${evacGpsError} Tap to retry.`
+                      : "Waiting for your phone location..."}
               </Text>
             </TouchableOpacity>
 
@@ -6508,6 +6361,7 @@ function ModulePanel({
           removeIncidentImage={removeIncidentImage}
           submitIncident={submitIncident}
           incidentBusy={incidentBusy}
+          canSubmitIncidentFromLocation={canSubmitIncidentFromLocation}
           onClose={() => setQuickReportVisible(false)}
         />
 
@@ -6596,6 +6450,7 @@ function QuickIncidentReportModal({
   removeIncidentImage,
   submitIncident,
   incidentBusy,
+  canSubmitIncidentFromLocation,
   onClose,
 }) {
   const imageItems = getIncidentImageItems(incidentImage);
@@ -6710,8 +6565,8 @@ function QuickIncidentReportModal({
             )}
 
             <TouchableOpacity
-              style={[styles.primaryBtn, incidentBusy && styles.disabledBtn]}
-              disabled={incidentBusy}
+              style={[styles.primaryBtn, (incidentBusy || !canSubmitIncidentFromLocation) && styles.disabledBtn]}
+              disabled={incidentBusy || !canSubmitIncidentFromLocation}
               onPress={submitIncident}
             >
               <Text style={styles.primaryText}>
@@ -9126,7 +8981,7 @@ barangayIncidentTooltipText: {
     color: "#FFFFFF",
   },
 
-  debugStatusCard: {
+  evacLocationStatusCard: {
     minHeight: 46,
     borderRadius: 14,
     paddingHorizontal: 12,
@@ -9140,25 +8995,12 @@ barangayIncidentTooltipText: {
     gap: 8,
   },
 
-  debugStatusCardActive: {
-    backgroundColor: "#14532D",
-    borderColor: "#14532D",
-  },
-
-  debugStatusCardDisabled: {
-    opacity: 0.7,
-  },
-
-  debugStatusText: {
+  evacLocationStatusText: {
     flex: 1,
     color: "#14532D",
     fontSize: 12,
     lineHeight: 16,
     fontWeight: "900",
-  },
-
-  debugStatusTextActive: {
-    color: "#FFFFFF",
   },
 
   locationAllowedCard: {

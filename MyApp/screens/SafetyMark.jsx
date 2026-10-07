@@ -31,17 +31,10 @@ import { Picker } from "@react-native-picker/picker";
 import ViewShot from "react-native-view-shot";
 
 import api, { getApiBaseUrl, PROD_BASE } from "../lib/api";
-import {
-  getSafetyDebugLocations,
-  saveSafetyDebugLocation,
-  turnOffSafetyDebugLocation,
-  updateSafetyDebugStatus,
-} from "../lib/safetyMarkingApi";
 import { UserContext } from "./UserContext";
 import { NotificationContext } from "./contexts/NotificationContext";
 import { useTheme } from "./contexts/ThemeContext";
 import jaenGeoJSON from "./data/jaen.json";
-import { generateSeededJaenDebugLocation } from "./utils/safetyDebugLocation";
 import { isPointInsideJaen } from "./utils/jaenBounds";
 import {
   normalizeCoordinate,
@@ -62,7 +55,7 @@ const JAEN_INITIAL_REGION = {
 };
 
 const SAFETY_CONNECTIONS_CACHE_KEY = "sagipbayan.safetyMark.connections.v1";
-const SAFETY_DEBUG_MARKERS_CACHE_KEY = "sagipbayan.safetyMark.debugMarkers.v1";
+const SAFETY_LOCATION_STALE_MS = 30 * 60 * 1000;
 
 const OUTSIDE_JAEN_MASK = [
   { latitude: 16.2, longitude: 119.8 },
@@ -98,12 +91,6 @@ const sanitizeGroupName = (value) =>
     .replace(/[<>$]/g, "")
     .replace(/\s+/g, " ")
     .slice(0, 50);
-const getDebugMarkerPayload = (data) => {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.markers)) return data.markers;
-  if (Array.isArray(data?.users)) return data.users;
-  return [];
-};
 const hasCoords = (location) =>
   typeof location?.lat === "number" && typeof location?.lng === "number";
 const readSafetyCache = async (key) => {
@@ -460,6 +447,10 @@ function normalizeConnection(connection, currentUserId) {
       safetyLabel: getSafetyLabel(member.safetyStatus),
       safetyColor: getSafetyColor(member.safetyStatus),
       updatedLabel: timeAgo(member?.location?.updatedAt),
+      locationUpdatedAt: member?.location?.updatedAt || null,
+      locationIsStale:
+        !member?.location?.updatedAt ||
+        Date.now() - new Date(member.location.updatedAt).getTime() > SAFETY_LOCATION_STALE_MS,
       location: hasCoords(member.location)
         ? { latitude: member.location.lat, longitude: member.location.lng }
         : null,
@@ -491,86 +482,6 @@ function normalizeConnection(connection, currentUserId) {
     isCreator: String(creatorId) === String(currentUserId),
     members,
     pendingMembers,
-  };
-}
-
-function normalizeDebugMarker(marker, currentUserId) {
-  const coordinate = normalizeCoordinate({
-    latitude: marker?.latitude,
-    longitude: marker?.longitude,
-  });
-  const safetyStatus = normalizeSafetyStatusValue(marker?.safetyStatus);
-
-  if (
-    !marker?.userId ||
-    !coordinate ||
-    !isPointInsideJaen(coordinate.latitude, coordinate.longitude)
-  ) {
-    return null;
-  }
-
-  return {
-    id: String(marker.userId),
-    userId: String(marker.userId),
-    username: safeDisplayText(marker.username, "Debug user"),
-    avatar: marker.avatar || marker.profileImage ? resolveAvatarPath(marker.avatar || marker.profileImage) : null,
-    safetyStatus,
-    safetyColor: getSafetyColor(safetyStatus),
-    safetyLabel: getSafetyLabel(safetyStatus),
-    coordinate,
-    isCurrentUser: String(marker.userId) === String(currentUserId),
-    insideJaen: true,
-    debugMode: true,
-    updatedLabel: timeAgo(marker.updatedAt),
-  };
-}
-
-function dedupeMarkersByUserId(markers) {
-  const seen = new Set();
-
-  return safeArray(markers).filter((marker) => {
-    const id = String(marker?.id || "").trim();
-    if (!id || seen.has(id)) return false;
-    seen.add(id);
-    return true;
-  });
-}
-
-function applySafetyStatusToMarker(marker, safetyStatus) {
-  const normalizedStatus = normalizeSafetyStatusValue(safetyStatus);
-
-  return {
-    ...marker,
-    safetyStatus: normalizedStatus,
-    safetyColor: getSafetyColor(normalizedStatus),
-    safetyLabel: getSafetyLabel(normalizedStatus),
-  };
-}
-
-function isCurrentUserMarker(marker, userId) {
-  return String(marker?.userId || marker?.id || "") === String(userId || "");
-}
-
-function buildCurrentUserDebugMarker(user, safetyStatus) {
-  if (!user?._id) return null;
-  const normalizedStatus = normalizeSafetyStatusValue(safetyStatus);
-
-  return {
-    id: String(user._id),
-    userId: String(user._id),
-    username:
-      [user?.fname, user?.lname].filter(Boolean).join(" ").trim() ||
-      user?.username ||
-      "You",
-    avatar: user?.avatar ? resolveAvatarPath(user.avatar) : null,
-    safetyStatus: normalizedStatus,
-    safetyColor: getSafetyColor(normalizedStatus),
-    safetyLabel: getSafetyLabel(normalizedStatus),
-    coordinate: generateSeededJaenDebugLocation(user._id),
-    isCurrentUser: true,
-    insideJaen: true,
-    debugMode: true,
-    shareSafetyLocation: true,
   };
 }
 
@@ -774,7 +685,6 @@ export default function SafetyMark() {
   const { refreshNotifications, notificationsVersion } = useContext(NotificationContext);
   const mapRef = useRef(null);
   const isClampingRegionRef = useRef(false);
-  const debugPollRef = useRef(null);
 
   const [connections, setConnections] = useState([]);
   const [joinCode, setJoinCode] = useState("");
@@ -786,9 +696,6 @@ export default function SafetyMark() {
   const [localSafetyStatus, setLocalSafetyStatus] = useState(
     normalizeSafetyStatusValue(user?.safetyStatus || "SAFE")
   );
-  const [safetyDebugMode, setSafetyDebugMode] = useState(false);
-  const [debugMarkers, setDebugMarkers] = useState([]);
-  const [debugSyncing, setDebugSyncing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [mongoBarangays, setMongoBarangays] = useState(null);
@@ -987,122 +894,23 @@ export default function SafetyMark() {
     }
   }, [user?._id]);
 
-  const fetchDebugMarkers = useCallback(async () => {
-    try {
-      const res = await getSafetyDebugLocations(user?._id);
-      const rawMarkers = getDebugMarkerPayload(res?.data);
-      const nextMarkers = dedupeMarkersByUserId(
-        rawMarkers
-          .map((item) => normalizeDebugMarker(item, user?._id))
-          .filter(Boolean)
-      );
-      console.log("[markers] fetched:", rawMarkers.length);
-      console.log("[markers] fetched count:", nextMarkers.length);
-      console.log("[markers] userIds:", nextMarkers.map((marker) => marker.id));
-      console.log("[markers] users:", nextMarkers.map((marker) => marker.id));
-      console.log(
-        "[markers] statuses:",
-        nextMarkers.map((marker) => ({
-          userId: marker.id,
-          safetyStatus: marker.safetyStatus,
-        }))
-      );
-      setIsOffline(false);
-      setDebugMarkers(nextMarkers);
-      writeSafetyCache(SAFETY_DEBUG_MARKERS_CACHE_KEY, rawMarkers);
-      console.log("[markers] refetched:", nextMarkers.length);
-      return nextMarkers;
-    } catch (err) {
-      if (isLikelyNetworkError(err)) {
-        setIsOffline(true);
-        const cachedMarkers = dedupeMarkersByUserId(
-          (await readSafetyCache(SAFETY_DEBUG_MARKERS_CACHE_KEY))
-            .map((item) => normalizeDebugMarker(item, user?._id))
-            .filter(Boolean)
-        );
-
-        if (cachedMarkers.length) {
-          setDebugMarkers(cachedMarkers);
-        }
-
-        console.log("[SafetyMark] debug marker fetch failed, using cached data:", err?.message);
-        return cachedMarkers;
-      }
-
-      console.log("[SafetyMark] debug marker fetch failed:", err?.message);
-      return [];
-    }
-  }, [user?._id]);
-
-  const syncOwnDebugLocation = useCallback(
-    async (status = localSafetyStatus) => {
-      if (!user?._id) return null;
-
-      const coordinate = generateSeededJaenDebugLocation(user._id);
-      console.log("[debug-location] current user:", user._id);
-      console.log("[debug-location] generated coordinate:", coordinate);
-
-      const payload = {
-        userId: user._id,
-        username:
-          [user?.fname, user?.lname].filter(Boolean).join(" ").trim() ||
-          user?.username ||
-          "User",
-        avatar: user?.avatar || "",
-        latitude: coordinate.latitude,
-        longitude: coordinate.longitude,
-        safetyStatus: status,
-        debugMode: true,
-      };
-
-      const res = await saveSafetyDebugLocation(payload);
-      console.log("[debug-location] saved to backend:", {
-        userId: res?.data?.marker?.userId,
-        latitude: res?.data?.marker?.latitude,
-        longitude: res?.data?.marker?.longitude,
-        debugMode: res?.data?.marker?.debugMode,
-      });
-      return res?.data?.marker || null;
-    },
-    [localSafetyStatus, user]
-  );
-
   const refreshAll = useCallback(async () => {
     if (!user?._id) return;
     setLoading(true);
     try {
-      await Promise.all([fetchConnections(), fetchDebugMarkers()]);
+      await fetchConnections();
     } catch (err) {
       if (isLikelyNetworkError(err)) setIsOffline(true);
       console.log("[SafetyMark] refresh failed:", err?.message);
     } finally {
       setLoading(false);
     }
-  }, [fetchConnections, fetchDebugMarkers, user?._id]);
+  }, [fetchConnections, user?._id]);
 
   const applyLocalSafetyStatus = useCallback(
     async (nextStatus) => {
       const normalizedStatus = normalizeSafetyStatusValue(nextStatus);
       setLocalSafetyStatus(normalizedStatus);
-
-      setDebugMarkers((items) => {
-        const updatedItems = items.map((item) =>
-          isCurrentUserMarker(item, user?._id)
-            ? applySafetyStatusToMarker(item, normalizedStatus)
-            : item
-        );
-
-        if (updatedItems.some((item) => isCurrentUserMarker(item, user?._id))) {
-          return updatedItems;
-        }
-
-        const localMarker = buildCurrentUserDebugMarker(user, normalizedStatus);
-        return localMarker ? dedupeMarkersByUserId([localMarker, ...updatedItems]) : updatedItems;
-      });
-      setDebugMarkers((items) => {
-        console.log("[markers] local state updated:", items);
-        return items;
-      });
 
       if (user?._id && setUser) {
         await setUser({
@@ -1130,7 +938,6 @@ export default function SafetyMark() {
 
   useEffect(() => {
     if (
-      safetyDebugMode ||
       !user?._id ||
       !isSafetyLocationSharingEnabled ||
       Platform.OS === "web"
@@ -1150,7 +957,7 @@ export default function SafetyMark() {
         if (!mounted) return;
 
         if (permission.status !== "granted") {
-          console.log("[debug-location] live GPS permission denied");
+          console.log("[SafetyMark] live GPS permission denied");
           return;
         }
 
@@ -1170,7 +977,7 @@ export default function SafetyMark() {
               lng: coordinate.longitude,
             });
           } catch (err) {
-            console.log("[debug-location] live GPS backend sync failed:", err?.message);
+            console.log("[SafetyMark] live GPS backend sync failed:", err?.message);
           }
         };
 
@@ -1188,7 +995,7 @@ export default function SafetyMark() {
           applyPosition
         );
       } catch (err) {
-        console.log("[debug-location] live GPS failed:", err?.message);
+        console.log("[SafetyMark] live GPS failed:", err?.message);
       }
     }
 
@@ -1198,31 +1005,13 @@ export default function SafetyMark() {
       mounted = false;
       subscription?.remove?.();
     };
-  }, [isSafetyLocationSharingEnabled, safetyDebugMode, user?._id]);
+  }, [isSafetyLocationSharingEnabled, user?._id]);
 
   useEffect(() => {
-    if (!safetyDebugMode || !user?._id) return undefined;
-
-    fetchDebugMarkers();
-    debugPollRef.current = setInterval(fetchDebugMarkers, 3000);
-
-    return () => {
-      if (debugPollRef.current) {
-        clearInterval(debugPollRef.current);
-        debugPollRef.current = null;
-      }
-    };
-  }, [fetchDebugMarkers, safetyDebugMode, user?._id]);
-
-  useEffect(() => {
-    if (!safetyDebugMode || !user?._id) return;
-
-    syncOwnDebugLocation(localSafetyStatus)
-      .then(fetchDebugMarkers)
-      .catch((err) => {
-        console.log("[SafetyMark] debug status sync failed:", err?.message);
-      });
-  }, [fetchDebugMarkers, localSafetyStatus, safetyDebugMode, syncOwnDebugLocation, user?._id]);
+    if (!user?._id) return undefined;
+    const intervalId = setInterval(fetchConnections, 10000);
+    return () => clearInterval(intervalId);
+  }, [fetchConnections, user?._id]);
 
   useEffect(() => {
     if (!user?._id) return;
@@ -1258,44 +1047,30 @@ export default function SafetyMark() {
     [connections]
   );
 
-  const allPeople = useMemo(() => {
-    const seen = new Map();
-
-    connections.forEach((connection) => {
-      connection.members.forEach((member) => {
-        if (!seen.has(member.id)) {
-          seen.set(member.id, {
-            ...member,
-            connectionCodes: [connection.code],
-          });
-        } else {
-          seen.get(member.id).connectionCodes.push(connection.code);
-        }
-      });
-    });
-
-    return Array.from(seen.values());
-  }, [connections]);
+  const selectedConnectionMembers = useMemo(
+    () => safeArray(selectedConnection?.members),
+    [selectedConnection]
+  );
 
   const memberCount = useMemo(() => {
     const ids = new Set([user?._id].filter(Boolean));
-    allPeople.forEach((member) => ids.add(member.id));
+    selectedConnectionMembers.forEach((member) => ids.add(member.id));
     return ids.size;
-  }, [allPeople, user?._id]);
+  }, [selectedConnectionMembers, user?._id]);
 
   const safeCount = useMemo(() => {
-    const others = allPeople.filter(
+    const others = selectedConnectionMembers.filter(
       (member) => member.id !== user?._id && member.safetyStatus === "SAFE"
     ).length;
     return others + (localSafetyStatus === "SAFE" ? 1 : 0);
-  }, [allPeople, localSafetyStatus, user?._id]);
+  }, [selectedConnectionMembers, localSafetyStatus, user?._id]);
 
   const notSafeCount = useMemo(() => {
-    const others = allPeople.filter(
+    const others = selectedConnectionMembers.filter(
       (member) => member.id !== user?._id && member.safetyStatus === "NOT_SAFE"
     ).length;
     return others + (localSafetyStatus === "NOT_SAFE" ? 1 : 0);
-  }, [allPeople, localSafetyStatus, user?._id]);
+  }, [selectedConnectionMembers, localSafetyStatus, user?._id]);
 
   const jaenBoundary = useMemo(
     () => renderBoundary(jaenGeoJSON, "#365314", 2.2, "transparent"),
@@ -1329,24 +1104,13 @@ export default function SafetyMark() {
 
   const jaenBounds = useMemo(() => getBoundsFromData(jaenGeoJSON), []);
 
-  useEffect(() => {
-    if (!safetyDebugMode) return;
-    const debugCoordinate = generateSeededJaenDebugLocation(user?._id);
-
-    mapRef.current?.animateToRegion(
-      {
-        ...debugCoordinate,
-        latitudeDelta: 0.025,
-        longitudeDelta: 0.025,
-      },
-      320
-    );
-  }, [safetyDebugMode, user?._id]);
-
   const visibleMembersOnMap = useMemo(() => {
-    const insideMembers = allPeople
+    if (!selectedConnection) return [];
+
+    const insideMembers = selectedConnectionMembers
       .map((member) => {
         if (member.shareSafetyLocation !== true) return null;
+        if (member.locationIsStale) return null;
 
         const coordinate = normalizeCoordinate(member.location);
         if (!coordinate || !member.insideJaen) return null;
@@ -1358,45 +1122,19 @@ export default function SafetyMark() {
       })
       .filter(Boolean);
 
-    if (safetyDebugMode) {
-      const allowedDebugUserIds = new Set([
-        String(user?._id || ""),
-        ...allPeople.map((member) => String(member?.id || "")),
-      ].filter(Boolean));
-      const serverMarkers = dedupeMarkersByUserId(
-        debugMarkers
-          .filter((marker) => allowedDebugUserIds.has(String(marker?.id || marker?.userId || "")))
-          .map((marker) => ({
-            ...(isCurrentUserMarker(marker, user?._id)
-              ? applySafetyStatusToMarker(marker, localSafetyStatus)
-              : marker),
-            isCurrentUser: isCurrentUserMarker(marker, user?._id),
-          }))
-      );
-      const hasCurrentUser = serverMarkers.some(
-        (marker) => isCurrentUserMarker(marker, user?._id)
-      );
-
-      if (hasCurrentUser || !user?._id) {
-        return serverMarkers;
-      }
-
-      return dedupeMarkersByUserId([
-        buildCurrentUserDebugMarker(user, localSafetyStatus),
-        ...serverMarkers,
-      ].filter(Boolean));
-    }
-
-    const userCoordinate = liveGpsLocation || normalizeCoordinate(user?.location);
+    const storedLocationAge = user?.location?.updatedAt
+      ? Date.now() - new Date(user.location.updatedAt).getTime()
+      : Number.POSITIVE_INFINITY;
+    const storedUserCoordinate =
+      storedLocationAge <= SAFETY_LOCATION_STALE_MS
+        ? normalizeCoordinate(user?.location)
+        : null;
+    const userCoordinate = liveGpsLocation || storedUserCoordinate;
     const shouldShowCurrentUser =
       isSafetyLocationSharingEnabled &&
       userCoordinate &&
       isPointInsideJaen(userCoordinate.latitude, userCoordinate.longitude);
-    const currentUserFallbackCoordinate = user?._id
-      ? generateSeededJaenDebugLocation(user._id)
-      : null;
-
-    if ((shouldShowCurrentUser || currentUserFallbackCoordinate) && user?._id) {
+    if (shouldShowCurrentUser && user?._id) {
       const currentUserMarker = {
         id: user?._id || "me",
         username: user?.username || "You",
@@ -1404,11 +1142,9 @@ export default function SafetyMark() {
         safetyStatus: localSafetyStatus,
         safetyColor: getSafetyColor(localSafetyStatus),
         safetyLabel: getSafetyLabel(localSafetyStatus),
-        coordinate: shouldShowCurrentUser ? userCoordinate : currentUserFallbackCoordinate,
+        coordinate: userCoordinate,
         isCurrentUser: true,
-        insideJaen: Boolean(shouldShowCurrentUser || currentUserFallbackCoordinate),
-        debugMode: !shouldShowCurrentUser,
-        privateOnly: !shouldShowCurrentUser,
+        insideJaen: true,
       };
 
       return [
@@ -1421,40 +1157,13 @@ export default function SafetyMark() {
 
     return [];
   }, [
-    allPeople,
-    debugMarkers,
     isSafetyLocationSharingEnabled,
     liveGpsLocation,
     localSafetyStatus,
-    safetyDebugMode,
+    selectedConnectionMembers,
+    selectedConnection,
     user,
   ]);
-
-  useEffect(() => {
-    console.log(
-      "[debug-location] rendered markers:",
-      visibleMembersOnMap.map((member) => ({
-        id: member.id,
-        debugMode: Boolean(member.debugMode),
-        isCurrentUser: Boolean(member.isCurrentUser),
-        privateOnly: Boolean(member.privateOnly),
-        sharing: member.shareSafetyLocation === true,
-        latitude: member.coordinate?.latitude,
-        longitude: member.coordinate?.longitude,
-      }))
-    );
-    if (user?._id) {
-      const hasCurrentUserMarker = visibleMembersOnMap.some(
-        (member) => isCurrentUserMarker(member, user._id)
-      );
-      console.log("[debug-location] current user marker visible:", hasCurrentUserMarker);
-    }
-  }, [user?._id, visibleMembersOnMap]);
-
-  const selectedConnectionMembers = useMemo(
-    () => safeArray(selectedConnection?.members),
-    [selectedConnection]
-  );
 
   const activeTabMeta = useMemo(() => {
     if (activeTab === "manage") {
@@ -1533,71 +1242,6 @@ export default function SafetyMark() {
     [jaenBounds]
   );
 
-  const handleToggleDebugMode = async () => {
-    if (!user?._id || debugSyncing) return;
-
-    const nextValue = !safetyDebugMode;
-    console.log("[debug-markers] toggle pressed:", {
-      userId: user._id,
-      nextValue,
-    });
-    setDebugSyncing(true);
-
-    try {
-      if (nextValue) {
-        const coordinate = generateSeededJaenDebugLocation(user._id);
-        const localMarker = buildCurrentUserDebugMarker(user, localSafetyStatus);
-        setSafetyDebugMode(true);
-        if (localMarker) {
-          setDebugMarkers((items) =>
-            dedupeMarkersByUserId([
-              localMarker,
-              ...items.filter((item) => !isCurrentUserMarker(item, user._id)),
-            ])
-          );
-        }
-        await syncOwnDebugLocation(localSafetyStatus);
-        await fetchDebugMarkers();
-        mapRef.current?.animateToRegion(
-          {
-            ...coordinate,
-            latitudeDelta: 0.025,
-            longitudeDelta: 0.025,
-          },
-          320
-        );
-      } else {
-        setSafetyDebugMode(false);
-        await turnOffSafetyDebugLocation(user._id);
-        setLiveGpsLocation(null);
-        setDebugMarkers((items) =>
-          items.filter((item) => !isCurrentUserMarker(item, user._id))
-        );
-        await fetchDebugMarkers();
-      }
-    } catch (err) {
-      if (nextValue) {
-        setSafetyDebugMode(true);
-        console.log("[debug-location] sync failed, keeping local debug mode on:", {
-          message: err?.response?.data?.message || err?.message,
-        });
-        Alert.alert(
-          "Debug Mode Local Only",
-          err?.response?.data?.message ||
-            "Debug Mode stayed ON locally, but backend sync failed. Restart the backend to share markers with other devices."
-        );
-      } else {
-        setSafetyDebugMode(true);
-        Alert.alert(
-          "Debug Sync Failed",
-          err?.response?.data?.message || "Failed to turn off debug marker."
-        );
-      }
-    } finally {
-      setDebugSyncing(false);
-    }
-  };
-
   const handleCreateConnection = async () => {
     if (!user?._id) return;
     const name = sanitizeGroupName(newGroupName).trim();
@@ -1666,38 +1310,12 @@ export default function SafetyMark() {
     if (!user?._id) return;
     const normalizedStatus = normalizeSafetyStatusValue(nextStatus);
 
-    console.log("[status update]", normalizedStatus);
-    await applyLocalSafetyStatus(normalizedStatus);
-
     try {
-      const res = await updateSafetyDebugStatus(user._id, normalizedStatus);
-      const updatedMarker = normalizeDebugMarker(res?.data?.marker, user._id);
-
-      if (updatedMarker) {
-        setDebugMarkers((items) => {
-          const nextMarkers = dedupeMarkersByUserId([
-            applySafetyStatusToMarker(updatedMarker, normalizedStatus),
-            ...items.filter((item) => !isCurrentUserMarker(item, user._id)),
-          ]);
-          console.log("[markers after update]", nextMarkers);
-          return nextMarkers;
-        });
-      } else if (safetyDebugMode) {
-        await syncOwnDebugLocation(normalizedStatus);
-      }
-
-      const fetchedMarkers = await fetchDebugMarkers();
-      console.log("[markers after update]", fetchedMarkers);
+      await api.put(endpoint, {
+        message: normalizedStatus === "SAFE" ? "I am safe" : "Need help",
+      });
       await applyLocalSafetyStatus(normalizedStatus);
-
-      api
-        .put(endpoint, {
-          message: normalizedStatus === "SAFE" ? "I am safe" : "Need help",
-        })
-        .then(refreshNotifications)
-        .catch((err) => {
-          console.log("[safety-status] notification sync failed:", err?.message);
-        });
+      await Promise.all([fetchConnections(), refreshNotifications()]);
     } catch (err) {
       Alert.alert("Error", err?.response?.data?.message || errorMessage);
     }
@@ -1917,7 +1535,7 @@ export default function SafetyMark() {
         {visibleMembersOnMap.map((member) =>
           member.coordinate ? (
             <ProfileSafetyMarker
-              key={`${member.debugMode ? "debug" : "live"}-${member.id}-${member.safetyStatus}-${member.safetyColor}`}
+              key={`live-${member.id}-${member.safetyStatus}-${member.safetyColor}`}
               member={member}
               coordinate={member.coordinate}
             />
@@ -2071,34 +1689,6 @@ export default function SafetyMark() {
               </View>
             </View>
 
-            <Pressable
-              style={[
-                styles.debugCard,
-                themed.softCard,
-                safetyDebugMode && styles.debugCardActive,
-                debugSyncing && styles.debugCardDisabled,
-              ]}
-              disabled={debugSyncing}
-              onPress={handleToggleDebugMode}
-            >
-              <Ionicons
-                name={safetyDebugMode ? "bug" : "bug-outline"}
-                size={18}
-                color={safetyDebugMode ? "#FFFFFF" : theme.primary}
-              />
-              <Text
-                style={[
-                  styles.debugCardText,
-                  themed.primaryText,
-                  safetyDebugMode && styles.debugCardTextActive,
-                ]}
-              >
-                {safetyDebugMode
-                  ? "Debug Mode ON: synced demo markers are visible"
-                  : "Debug Mode OFF: real location visibility is followed"}
-              </Text>
-            </Pressable>
-
             <SafetyStatusToggle
               value={localSafetyStatus}
               disabled={loading}
@@ -2204,9 +1794,13 @@ export default function SafetyMark() {
                             <Text style={[styles.personMeta, themed.subtext]}>
                               {!member.shareSafetyLocation
                                 ? "Location sharing disabled"
-                                : member.insideJaen || !member.location
-                                ? member.updatedLabel
-                                : "Outside the boundary of Jaen"}
+                                : !member.location
+                                  ? "Location unavailable"
+                                  : !member.insideJaen
+                                    ? "Outside coverage area · currently outside Jaen"
+                                    : member.locationIsStale
+                                      ? `Location stale · ${member.updatedLabel}`
+                                      : member.updatedLabel}
                             </Text>
                           </View>
                           <View style={styles.personActions}>
@@ -2859,41 +2453,6 @@ const styles = StyleSheet.create({
   profileStatusText: {
     fontSize: 12,
     fontWeight: "800",
-  },
-
-  debugCard: {
-    minHeight: 46,
-    marginTop: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 16,
-    backgroundColor: "#EEF8EA",
-    borderWidth: 1,
-    borderColor: "#CFE3C6",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-
-  debugCardActive: {
-    backgroundColor: "#365314",
-    borderColor: "#365314",
-  },
-
-  debugCardDisabled: {
-    opacity: 0.7,
-  },
-
-  debugCardText: {
-    flex: 1,
-    color: "#365314",
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "800",
-  },
-
-  debugCardTextActive: {
-    color: "#FFFFFF",
   },
 
   statusToggleCard: {

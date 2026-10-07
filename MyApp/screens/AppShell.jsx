@@ -17,6 +17,7 @@ import PasswordSecurity from "./PasswordSecurity";
 import DonationScreen from "./DonationScreen";
 import Settings from "./Settings";
 import DigitalTwinScreen from "./DigitalTwinScreen";
+import HelpCenter from "./HelpCenter";
 import { MapContext } from "./contexts/MapContext";
 import { NotificationContext, NotificationProvider } from "./contexts/NotificationContext";
 import { UserContext } from "./UserContext";
@@ -379,6 +380,13 @@ export default function AppShell() {
                   component={Settings}
                   listeners={{
                     focus: () => setCurrentScreen("Settings"),
+                  }}
+                />
+                <Stack.Screen
+                  name="HelpCenter"
+                  component={HelpCenter}
+                  listeners={{
+                    focus: () => setCurrentScreen("HelpCenter"),
                   }}
                 />
               </Stack.Navigator>

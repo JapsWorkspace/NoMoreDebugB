@@ -2,7 +2,6 @@ const mongoose = require("mongoose");
 
 const UserModel = require("../models/User");
 const ConnectionModel = require("../models/Connection");
-const SafetyDebugLocation = require("../models/SafetyDebugLocation");
 const { sendExpoPushNotifications } = require("../utils/sendExpoPushNotifications");
 
 function normalizeConnectionCode(code) {
@@ -43,20 +42,10 @@ function buildSafetyLocationLabel(user) {
 
 async function resolveSafetyAlertLocation(user) {
   if (!user?._id) return null;
-
-  const debugMarker = await SafetyDebugLocation.findOne({
-    userId: String(user._id),
-    debugMode: true,
-  })
-    .sort({ updatedAt: -1 })
-    .lean();
-  const debugLatitude = toFiniteCoordinate(debugMarker?.latitude);
-  const debugLongitude = toFiniteCoordinate(debugMarker?.longitude);
   const liveLatitude = toFiniteCoordinate(user?.location?.lat);
   const liveLongitude = toFiniteCoordinate(user?.location?.lng);
-  const usingDebugLocation = debugLatitude !== null && debugLongitude !== null;
-  const latitude = usingDebugLocation ? debugLatitude : liveLatitude;
-  const longitude = usingDebugLocation ? debugLongitude : liveLongitude;
+  const latitude = liveLatitude;
+  const longitude = liveLongitude;
 
   if (latitude === null || longitude === null) return null;
 
@@ -64,7 +53,7 @@ async function resolveSafetyAlertLocation(user) {
     latitude,
     longitude,
     locationLabel: buildSafetyLocationLabel(user),
-    source: usingDebugLocation ? "debug" : "live",
+    source: "live",
   };
 }
 

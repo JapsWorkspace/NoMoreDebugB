@@ -83,6 +83,14 @@ const ACCOUNT_ITEMS = [
   },
 ];
 
+const SUPPORT_ITEMS = [
+  {
+    icon: "help-buoy-outline",
+    label: "Help Center",
+    route: "HelpCenter",
+  },
+];
+
 export default function AppDrawer({
   onRequestClose = () => {},
   onLogout = async () => {},
@@ -250,6 +258,22 @@ export default function AppDrawer({
                   icon={item.icon}
                   label={item.label}
                   isLast={index === ACCOUNT_ITEMS.length - 1}
+                  theme={theme}
+                  onPress={() => goTo(item.route, item.params)}
+                />
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, themed.text]}>Help &amp; Support</Text>
+            <View style={[styles.listGroup, themed.card]}>
+              {SUPPORT_ITEMS.map((item, index) => (
+                <DrawerRow
+                  key={item.label}
+                  icon={item.icon}
+                  label={item.label}
+                  isLast={index === SUPPORT_ITEMS.length - 1}
                   theme={theme}
                   onPress={() => goTo(item.route, item.params)}
                 />

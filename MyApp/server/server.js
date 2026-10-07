@@ -54,7 +54,6 @@ const timeInOutRoutes = require("./routes/timeInOutRoutes");
 const editRoutes = require("./routes/editRoutes");
 const barangayStockRoutes = require("./routes/barangayStockRoutes");
 const donationRoutes = require("./routes/donationRoutes");
-const safetyMarkingRoutes = require("./routes/safetyMarkingRoutes");
 const devNotificationRoutes = require("./routes/devNotificationRoutes");
 const smsRoutes = require("./routes/smsRoutes");
 const emailRoutes = require("./routes/emailRoutes");
@@ -427,7 +426,6 @@ app.use("/api/barangay-stock", barangayStockRoutes);
 
 app.use("/api/donations", donationRoutes);
 
-app.use("/api/safety-marking", safetyMarkingRoutes);
 
 app.use("/api/sms", smsRoutes);
 

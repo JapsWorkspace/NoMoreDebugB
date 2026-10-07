@@ -187,16 +187,6 @@ export default function useRouting({
   const inFlightRef = useRef(false);
   const lastKeyRef = useRef(null);
 
-  /* ✅ TEMP DEBUG — FORCE CRITICAL INCIDENT AT ROUTE START */
-  const debugIncidents = [
-    ...incidents,
-    {
-      latitude: from?.[0],
-      longitude: from?.[1],
-      level: "critical",
-    },
-  ];
-
   useEffect(() => {
     lastKeyRef.current = null;
     inFlightRef.current = false;
@@ -241,7 +231,7 @@ export default function useRouting({
         const route = res.data.routes?.[0];
         if (!route) return res;
 
-        let wp = findIntersectionWaypoint(route, debugIncidents);
+        let wp = findIntersectionWaypoint(route, incidents);
 
         if (!wp) {
           const coords = route.geometry.coordinates.map(
@@ -250,7 +240,7 @@ export default function useRouting({
               longitude: lng,
             })
           );
-          wp = pickLateralWaypoint(coords, debugIncidents);
+          wp = pickLateralWaypoint(coords, incidents);
         }
 
         return wp ? requestRoute(wp) : res;
@@ -280,7 +270,7 @@ export default function useRouting({
                 )
               ),
             },
-            ...analyzeRouteAgainstIncidents(coords, debugIncidents),
+            ...analyzeRouteAgainstIncidents(coords, incidents),
           };
         });
 

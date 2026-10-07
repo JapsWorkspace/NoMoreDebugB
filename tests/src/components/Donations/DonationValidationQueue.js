@@ -18,15 +18,9 @@ import {
   getDonationQueueTypeForRole,
   normalizeRole,
 } from "../auth/roleAccessUtils";
+import { API_BASE_URL } from "../../config/api";
 
-const LOCAL_BASE_URL = "http://localhost:8000";
-const REMOTE_BASE_URL =
-  process.env.REACT_APP_API_URL || "https://gaganadapat.onrender.com";
-const BASE_URL =
-  typeof window !== "undefined" &&
-  ["localhost", "127.0.0.1"].includes(window.location.hostname)
-    ? LOCAL_BASE_URL
-    : REMOTE_BASE_URL;
+const BASE_URL = API_BASE_URL;
 
 const NOTIFICATION_DURATION = 10000;
 const MAX_VISIBLE_NOTIFICATIONS = 4;

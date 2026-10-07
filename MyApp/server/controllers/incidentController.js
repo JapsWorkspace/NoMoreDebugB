@@ -16,6 +16,7 @@ const {
 const axios = require("axios");
 const Notification = require("../models/Notification");
 const createNotification = require("../utils/createNotification");
+const { isPointInsideJaen } = require("../utils/jaenBoundary");
 
 
 const exif = require("exif-parser");
@@ -1903,6 +1904,9 @@ const registerIncident = async (req, res) => {
         ? Number(req.body.longitude)
         : null;
 
+    const reporterLatitude = Number(req.body.reporterLatitude);
+    const reporterLongitude = Number(req.body.reporterLongitude);
+
     if (!type || !allowedTypes.has(incidentType)) {
       return res.status(400).json({
         message: "A valid incident type is required.",
@@ -1965,6 +1969,26 @@ const registerIncident = async (req, res) => {
     ) {
       return res.status(400).json({
         message: "Valid incident coordinates are required.",
+      });
+    }
+
+    if (!isPointInsideJaen(latitude, longitude)) {
+      return res.status(403).json({
+        code: "OUTSIDE_JAEN_BOUNDARY",
+        title: "Outside Jaen Boundary",
+        message: "Incident reports can only be submitted from a verified location inside Jaen.",
+      });
+    }
+
+    if (
+      !Number.isFinite(reporterLatitude) ||
+      !Number.isFinite(reporterLongitude) ||
+      !isPointInsideJaen(reporterLatitude, reporterLongitude)
+    ) {
+      return res.status(403).json({
+        code: "REPORTER_OUTSIDE_JAEN",
+        title: "Location Verification Required",
+        message: "Your current phone location must be verified inside Jaen before submitting a report.",
       });
     }
 

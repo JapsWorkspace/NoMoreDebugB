@@ -1,5 +1,4 @@
 const UserModel = require("../models/User");
-const SafetyDebugLocation = require("../models/SafetyDebugLocation");
 const PostingGuideline = require("../models/Guidelines");
 const Announcement = require("../models/Announcement");
 const Notification = require("../models/Notification");
@@ -1336,19 +1335,6 @@ const updateShareSafetyLocation = async (req, res) => {
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
-    }
-
-    if (!shareSafetyLocation) {
-      await SafetyDebugLocation.findOneAndUpdate(
-        { userId: String(userId) },
-        {
-          $set: {
-            debugMode: false,
-            updatedAt: new Date(),
-          },
-        },
-        { new: true }
-      );
     }
 
     return res.json({
