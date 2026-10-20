@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import api from "../lib/api";
 import { UserContext } from "./UserContext";
@@ -125,6 +126,21 @@ export default function VerifyOtp({ route, navigation }) {
           userId: resetUserId,
           resetToken: verifyResponse?.data?.resetToken,
         });
+        return;
+      }
+
+      if (purpose === "two_factor") {
+        const authenticatedUser = verifyResponse?.data?.user;
+        const token = verifyResponse?.data?.token;
+
+        if (!authenticatedUser?._id || !token) {
+          Alert.alert("Error", "We could not complete sign-in. Please try again.");
+          return;
+        }
+
+        await AsyncStorage.setItem("token", token);
+        await setUser({ ...authenticatedUser, id: authenticatedUser._id });
+        Alert.alert("Success", "Sign-in verified.");
         return;
       }
 
