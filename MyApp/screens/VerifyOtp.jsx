@@ -104,16 +104,7 @@ export default function VerifyOtp({ route, navigation }) {
       });
 
       if (purpose === "passwordReset") {
-        let resetUserId = userId;
-
-        if (!resetUserId) {
-          const res = await api.get("/user/users");
-          const users = Array.isArray(res.data) ? res.data : [];
-          const user = users.find(
-            (item) => normalizeEmail(item?.email) === safeEmail
-          );
-          resetUserId = user?._id || user?.id;
-        }
+        const resetUserId = userId || verifyResponse?.data?.userId;
 
         if (!resetUserId) {
           Alert.alert("Error", "Account not found after OTP verification.");
@@ -129,35 +120,20 @@ export default function VerifyOtp({ route, navigation }) {
         return;
       }
 
-      if (purpose === "two_factor") {
-        const authenticatedUser = verifyResponse?.data?.user;
-        const token = verifyResponse?.data?.token;
+      const authenticatedUser = verifyResponse?.data?.user;
+      const token = verifyResponse?.data?.token;
 
-        if (!authenticatedUser?._id || !token) {
-          Alert.alert("Error", "We could not complete sign-in. Please try again.");
-          return;
-        }
-
+      if (authenticatedUser?._id && token) {
         await AsyncStorage.setItem("token", token);
         await setUser({ ...authenticatedUser, id: authenticatedUser._id });
-        Alert.alert("Success", "Sign-in verified.");
+        Alert.alert(
+          "Success",
+          purpose === "two_factor" ? "Sign-in verified." : "Account verified successfully."
+        );
         return;
       }
 
-      Alert.alert("Success", "OTP verified.");
-
-      const res = await api.get("/user/users");
-      const users = Array.isArray(res.data) ? res.data : [];
-      const user = users.find(
-        (item) => normalizeEmail(item?.email) === safeEmail
-      );
-
-      if (!user) {
-        Alert.alert("Error", "User not found after OTP verification.");
-        return;
-      }
-
-      setUser(user);
+      Alert.alert("Error", "We could not complete account verification. Please try again.");
     } catch (err) {
       Alert.alert("Error", err?.response?.data?.message || "Invalid OTP.");
     } finally {
