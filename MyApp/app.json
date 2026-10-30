@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "SagipBayan",
+    "name": "SagipJaen",
     "slug": "SagipBayan",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/applogo-v2.png",
+    "icon": "./assets/jaen-icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./stores/assets/slogowhite.png",
+      "image": "./assets/jaen-logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#047857"
+      "backgroundColor": "#FFFFFF"
     },
     "ios": {
       "supportsTablet": true,
@@ -21,8 +21,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/applogo-v2.png",
-        "backgroundColor": "#063D2B"
+        "foregroundImage": "./assets/jaen-icon.png",
+        "backgroundColor": "#FFFFFF"
       },
       "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "resize",
@@ -35,7 +35,7 @@
       }
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/jaen-icon.png"
     },
     "plugins": [
       [
