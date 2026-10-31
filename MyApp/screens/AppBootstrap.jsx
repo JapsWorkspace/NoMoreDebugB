@@ -12,7 +12,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StatusBar } from "expo-status-bar";
 import { UserContext } from "./UserContext";
 
-const JaenLockup = require("../assets/jaen-logo.png");
+const JaenLockup = require("../assets/jaen-municipal-seal.png");
 
 const SPLASH_MIN_MS = 4200;
 

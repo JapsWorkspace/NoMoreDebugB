@@ -77,12 +77,12 @@ export default function GetStarted({ navigation, route }) {
           <View style={styles.content}>
 
             <Image
-              source={require("../stores/assets/slogowhite.png")}
+              source={require("../assets/jaen-municipal-seal.png")}
               style={styles.logo}
               resizeMode="contain"
             />
 
-            <Text style={styles.brandText}>Sagip Bayan</Text>
+            <Text style={styles.brandText}>SagipJaen</Text>
 
             <View style={styles.bottomDock}>
               <View

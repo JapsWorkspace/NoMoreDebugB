@@ -4,11 +4,11 @@
     "slug": "SagipBayan",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/jaen-icon.png",
+    "icon": "./assets/jaen-municipal-seal.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/jaen-logo.png",
+      "image": "./assets/jaen-municipal-seal.png",
       "resizeMode": "contain",
       "backgroundColor": "#FFFFFF"
     },
@@ -21,7 +21,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/jaen-icon.png",
+        "foregroundImage": "./assets/jaen-municipal-seal.png",
         "backgroundColor": "#FFFFFF"
       },
       "edgeToEdgeEnabled": true,
@@ -35,7 +35,7 @@
       }
     },
     "web": {
-      "favicon": "./assets/jaen-icon.png"
+      "favicon": "./assets/jaen-municipal-seal.png"
     },
     "plugins": [
       [

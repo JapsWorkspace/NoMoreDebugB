@@ -82,9 +82,11 @@ export default StyleSheet.create({
   },
 
   logo: {
-    width: width * 3.68,
-    height: 280,
-    marginBottom: -150,
+    width: 232,
+    height: 232,
+    borderRadius: 116,
+    backgroundColor: COLORS.white,
+    marginBottom: 8,
   },
 
   brandText: {
